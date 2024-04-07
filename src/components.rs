@@ -9,3 +9,19 @@ pub struct AnimationIndices {
 #[derive(Component, Deref, DerefMut)]
 pub struct AnimationTimer(pub Timer);
 
+#[derive(Component)]
+pub struct Hero {
+    pub id: f32,
+    pub active: bool,
+    pub speed: f32,
+}
+
+impl Default for Hero {
+    fn default() -> Self {
+        Self {
+            id: 1.,
+            active: false,
+            speed: 1.
+        }
+    }
+}
