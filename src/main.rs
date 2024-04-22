@@ -11,7 +11,8 @@ use constants::{
     HEX_TILE_SIZE, QUARTER_SIZE,
 };
 use my_resourses::{
-    Cell, CurrentHeroPosition, GameTexture, Grid, HeroPath, Node, PathCondition, PathConditions, Position, SimplifiedCell, TargetHeroPosition, WindowSize
+    Cell, CurrentHeroPosition, GameTexture, Grid, HeroPath, Node, PathCondition, PathConditions,
+    Position, SimplifiedCell, TargetHeroPosition, WindowSize,
 };
 use rand::{thread_rng, Rng};
 
@@ -50,19 +51,16 @@ fn main() {
         .add_systems(Update, animate_sprite)
         .add_systems(Update, mouse_button_input_system)
         .add_systems(Update, pathfinding_system.run_if(pathfinding_criteria))
-        .add_systems(Update, movement_system.run_if(movement_criteria))
+        .add_systems(FixedUpdate, movement_system.run_if(movement_criteria))
+        .insert_resource(Time::<Fixed>::from_seconds(0.02))
         .run();
 }
 
-fn pathfinding_criteria(
-    path_condition: Res<PathCondition>,
-) -> bool {
+fn pathfinding_criteria(path_condition: Res<PathCondition>) -> bool {
     path_condition.path_state == PathConditions::Search
 }
 
-fn movement_criteria(
-    path_condition: Res<PathCondition>,
-) -> bool {
+fn movement_criteria(path_condition: Res<PathCondition>) -> bool {
     path_condition.path_state == PathConditions::Performance
 }
 
@@ -133,7 +131,7 @@ fn character_spawn_system(
                     y: current_hero_position.cell.pos_y as i32,
                 },
             };
-        
+
             commands.insert_resource(hero_path);
 
             let hero = Hero {
@@ -236,7 +234,7 @@ fn mouse_button_input_system(
                         target_cell.cell.y = new_target_cell.y;
                         target_cell.cell.pos_x = new_target_cell.pos_x;
                         target_cell.cell.pos_y = new_target_cell.pos_y;
-    
+
                         path_condition.path_state = PathConditions::Search;
                     }
 
@@ -331,38 +329,36 @@ fn movement_system(
     target_cell: Res<TargetHeroPosition>,
 ) {
     for (hero, mut transform, mut sprite) in &mut sprite {
-        let current_distance_x = hero_path.current_target_cell.x as f32 - transform.translation.x;
-        let current_distance_y = hero_path.current_target_cell.y as f32 - transform.translation.y;
+        let current_distance_x = hero_path.current_target_cell.x as f32 - current_cell.cell.pos_x;
+        let current_distance_y = hero_path.current_target_cell.y as f32 - current_cell.cell.pos_y;
+        let real_distance_x = (hero_path.current_target_cell.x as f32 - transform.translation.x).abs();
+        let real_distance_y = (hero_path.current_target_cell.y as f32 - transform.translation.y).abs();
 
         if hero.active
-            && (((current_distance_x) > 2. || (current_distance_y) > 2.)
-                || ((current_distance_x) < -2. || (current_distance_y) < -2.))
+            && (real_distance_x.clone() > 1. || real_distance_y.clone() > 1.)
         {
-            if current_distance_x > 0. {
-                transform.translation.x += 150. * time.delta_seconds();
-            } else {
-                if !sprite.flip_x {
-                    sprite.flip_x = true;
-                }
-                transform.translation.x -= 150. * time.delta_seconds();
+            if real_distance_x.clone() > 1. {
+                transform.translation.x += current_distance_x.clone() / 20.;
+                sprite.flip_x = current_distance_x.clone() < 0.;
             }
 
-            if current_distance_y > 0. {
-                transform.translation.y += 150. * time.delta_seconds();
-            } else {
-                transform.translation.y -= 150. * time.delta_seconds();
+            if real_distance_y.clone() > 1. {
+                transform.translation.y += current_distance_y.clone() / 20.;
             }
         } else {
             if hero_path.cells.length() > 0 {
                 hero_path.cells.pop();
                 if let Some(position) = hero_path.cells.last() {
                     hero_path.current_target_cell = position.clone();
-                } 
+
+                    current_cell.cell.pos_x = transform.translation.x;
+                    current_cell.cell.pos_y = transform.translation.y;
+                }
             } else {
                 current_cell.cell.x = target_cell.cell.x;
                 current_cell.cell.y = target_cell.cell.y;
-                current_cell.cell.pos_x = transform.translation.x;
-                current_cell.cell.pos_y = transform.translation.y;
+                current_cell.cell.pos_x = target_cell.cell.pos_x;
+                current_cell.cell.pos_y = target_cell.cell.pos_y;
 
                 path_condition.path_state = PathConditions::Sleep;
 
@@ -380,7 +376,6 @@ fn pathfinding_system(
     grid: Res<Grid>,
     mut path_condition: ResMut<PathCondition>,
     mut hero_path: ResMut<HeroPath>,
-    mut commands: Commands,
 ) {
     let start_position = Position {
         x: current_cell.cell.x as i32,
@@ -393,7 +388,8 @@ fn pathfinding_system(
     };
 
     let mut openlist: std::collections::HashMap<Position, Node> = std::collections::HashMap::new();
-    let mut closedlist: std::collections::HashMap<Position, Node> = std::collections::HashMap::new();
+    let mut closedlist: std::collections::HashMap<Position, Node> =
+        std::collections::HashMap::new();
 
     openlist.insert(
         start_position.clone(),
@@ -409,10 +405,14 @@ fn pathfinding_system(
     while !openlist.is_empty() {
         let mut current_node = None;
         let mut lowest_f = -1;
+        let mut lowest_g = -1;
+
         for (position, node) in openlist.iter() {
-            if lowest_f == -1 || node.f < lowest_f {
-                current_node = Some(node);
+            if lowest_f == -1 || node.f < lowest_f || (node.f == lowest_f && node.g < lowest_g) {
+                // println!("{} {}", node.position.x.clone(), node.position.y.clone());
                 lowest_f = node.f;
+                lowest_g = node.g;
+                current_node = Some(node);
             }
         }
 
@@ -421,6 +421,7 @@ fn pathfinding_system(
         }
 
         let current_node = current_node.unwrap().clone();
+
         let mut current_position = current_node.position.clone();
         openlist.remove(&current_position);
         // Add n to the CLOSED list
@@ -440,46 +441,54 @@ fn pathfinding_system(
         // IF n is the same as the goal, we have a solution. Backtrack to find the path.
         if current_position == destination {
             let mut nodelist: Vec<Position> = vec![];
-            loop {
-                nodelist.push(current_position.clone().get_world_position(grid.cells.clone()));
-                match closedlist.get(&current_position).unwrap().parent {
-                    None => break,
-                    _ => {
-                        current_position = closedlist
-                            .get(&current_position)
-                            .unwrap()
-                            .parent
-                            .clone()
-                            .unwrap();
-                    }
+
+            while let Some(node) = closedlist.get(&current_position) {
+                let cell_position = current_position.clone().get_world_position(grid.cells.clone());
+                nodelist.push(cell_position);
+            
+                if let Some(parent) = &node.parent {
+                    current_position = parent.clone();
+                } else {
+                    break;
                 }
             }
+            
 
             if let Some(target_cell) = nodelist.last().cloned() {
                 hero_path.cells = nodelist;
                 hero_path.current_target_cell = target_cell.clone();
 
                 path_condition.path_state = PathConditions::Performance;
-            } 
+            }
 
             break;
         }
         let mut neighbors: Vec<Position> = vec![];
 
-        let correction_factor: i32 = if (current_position.y + 1i32) % 2i32 == 0i32 { -1i32 } else { 1i32 };
+        let correction_factor: i32 = if (current_position.y + 1i32) % 2i32 == 0i32 {
+            -1i32
+        } else {
+            1i32
+        };
 
         let neighbors_cords = vec![
             (current_position.x - 1i32, current_position.y),
             (current_position.x + 1i32, current_position.y),
             (current_position.x, current_position.y - 1i32),
             (current_position.x, current_position.y + 1i32),
-            (current_position.x + correction_factor, current_position.y + 1i32),
-            (current_position.x + correction_factor, current_position.y + 1i32),
+            (
+                current_position.x + correction_factor,
+                current_position.y + 1i32,
+            ),
+            (
+                current_position.x + correction_factor,
+                current_position.y + 1i32,
+            ),
         ];
 
         for neighbor in neighbors_cords.iter() {
-            if neighbor.0 >= 0i32 
-            && neighbor.1 >= 0i32 {
+            if neighbor.0 >= 0i32 && neighbor.1 >= 0i32 && neighbor.0 < 18i32 && neighbor.1 < 12i32
+            {
                 neighbors.push(Position {
                     x: neighbor.0,
                     y: neighbor.1,
